@@ -1,4 +1,5 @@
 name: Summarize new issues
+run-name: Summarize ${{ github.event.issue.title }}[${{ github.event.issue.number }}]
 
 on:
   issues:
@@ -15,19 +16,44 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+      
+      - name: Validate URL format
+        id: urlValidation
+        run: |
+          URL="${{ github.event.issue.body }}"
+          if [[ $URL =~ ^https?:// ]]; then
+            echo "valid=true" >> $GITHUB_OUTPUT
+            echo "url=$URL" >> $GITHUB_OUTPUT
+          else
+            echo "valid=false" >> $GITHUB_OUTPUT
+            echo "URL validation failed: '$URL' is not a valid HTTP/HTTPS URL"
+          fi
+      
+      - name: Jina reader
+        id: jinaReader
+        if: steps.urlValidation.outputs.valid == 'true'
+        uses: fjogeleit/http-request-action@v1
+        with:
+          url: 'https://r.jina.ai/${{ steps.urlValidation.outputs.url }}'
+          method: 'GET'
+          timeout: 30000
+        continue-on-error: true
+
+      - name: Rate limiting delay
+        run: sleep 2
 
       - name: Run AI inference
         id: inference
         uses: actions/ai-inference@v1
         with:
+          max-tokens: 2000
+          system-prompt-file: './.github/prompts/summary-system.txt'
           prompt: |
-            Summarize the following GitHub issue in one paragraph:
-            Title: ${{ github.event.issue.title }}
-            Body: ${{ github.event.issue.body }}
+            ${{ steps.jinaReader.outputs.response || format('URL: {0}\nTitle: {1}\nDescription: {2}', github.event.issue.body, github.event.issue.title, 'Content could not be retrieved from the URL. Please check if the URL is accessible and try again.') }}
 
       - name: Comment with AI summary
         run: |
-          gh issue comment $ISSUE_NUMBER --body '${{ steps.inference.outputs.response }}'
+          echo "${{ steps.inference.outputs.response }}" | gh issue comment $ISSUE_NUMBER --body-file -
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
