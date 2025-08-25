@@ -77,10 +77,15 @@ jobs:
 
       - name: Truncate content for token limit
         id: truncateContent
-        run: python3 scripts/truncate_content.py
+        run: |
+          # Write crawl result response to temp file to avoid environment variable length limits
+          cat > /tmp/crawl_result_response.json << 'RESULT_EOF'
+          ${{ steps.crawlResult.outputs.response }}
+          RESULT_EOF
+          # Execute the Python script
+          python3 scripts/truncate_content.py
         env:
           CRAWL_OUTCOME: ${{ steps.crawlResult.outcome }}
-          RAW_RESPONSE: ${{ steps.crawlResult.outputs.response }}
           FALLBACK_URL: ${{ github.event.issue.body }}
           FALLBACK_TITLE: ${{ github.event.issue.title }}
 

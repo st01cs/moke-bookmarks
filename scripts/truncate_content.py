@@ -11,9 +11,8 @@ import sys
 def extract_content():
     """Extract content from Crawl4AI response with robust error handling"""
     
-    # Get environment variables
+    # Get environment variables for fallback data
     crawl_outcome = os.environ.get('CRAWL_OUTCOME', '')
-    raw_response = os.environ.get('RAW_RESPONSE', '')
     fallback_url = os.environ.get('FALLBACK_URL', '')
     fallback_title = os.environ.get('FALLBACK_TITLE', '')
     
@@ -22,31 +21,62 @@ def extract_content():
     content = ""
     
     # Try to extract content from successful response
-    if crawl_outcome == 'success' and raw_response:
+    if crawl_outcome == 'success':
+        # Read raw response from temp file instead of environment variable
+        temp_file = '/tmp/crawl_result_response.json'
+        
         try:
-            response_data = json.loads(raw_response)
-            print("Successfully parsed JSON response")
-            
-            # Try multiple content fields from Crawl4AI
-            result = response_data.get('result', {})
-            content = (
-                result.get('fit_markdown') or
-                result.get('markdown') or
-                result.get('cleaned_html') or
-                result.get('raw_html') or
-                ""
-            )
-            
-            if content:
-                print("Successfully extracted content from Crawl4AI response")
-            else:
-                print("Warning: No content found in response data")
-                
-        except json.JSONDecodeError as e:
-            print(f"Warning: Failed to parse JSON response: {e}")
-            print(f"Response preview: {raw_response[:200]}...")
+            with open(temp_file, 'r', encoding='utf-8') as f:
+                raw_response = f.read().strip()
+        except FileNotFoundError:
+            print(f"Warning: Response file {temp_file} not found")
+            raw_response = ""
         except Exception as e:
-            print(f"Warning: Unexpected error processing response: {e}")
+            print(f"Warning: Error reading response file: {e}")
+            raw_response = ""
+        
+        if raw_response:
+            try:
+                response_data = json.loads(raw_response)
+                print("Successfully parsed JSON response")
+                print(f"Response keys: {list(response_data.keys())}")
+                
+                # Try multiple content fields from Crawl4AI - handle both async and sync responses
+                result = response_data.get('result', {})
+                results = response_data.get('results', {})
+                
+                # For synchronous responses, results might be at top level
+                if isinstance(results, dict) and results:
+                    content = (
+                        results.get('fit_markdown') or
+                        results.get('markdown') or
+                        results.get('cleaned_html') or
+                        results.get('raw_html') or
+                        ""
+                    )
+                
+                # For async responses, check result field
+                if not content and isinstance(result, dict):
+                    content = (
+                        result.get('fit_markdown') or
+                        result.get('markdown') or
+                        result.get('cleaned_html') or
+                        result.get('raw_html') or
+                        ""
+                    )
+                
+                if content:
+                    print("Successfully extracted content from Crawl4AI response")
+                else:
+                    print("Warning: No content found in response data")
+                    
+            except json.JSONDecodeError as e:
+                print(f"Warning: Failed to parse JSON response: {e}")
+                print(f"Response preview: {raw_response[:200]}...")
+            except Exception as e:
+                print(f"Warning: Unexpected error processing response: {e}")
+        else:
+            print("Warning: Empty response from temp file")
     else:
         print("Warning: Crawl4AI completion step was not successful or response is empty")
     
