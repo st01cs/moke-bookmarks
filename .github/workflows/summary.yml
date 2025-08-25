@@ -47,7 +47,7 @@ jobs:
           url: 'http://localhost:11235/crawl'
           method: 'POST'
           contentType: 'application/json'
-          data: '{"urls": ["${{ steps.urlValidation.outputs.url }}"], "priority": 10}'
+          data: '{"urls": ["${{ steps.urlValidation.outputs.url }}"], "priority": 10, "crawler_params": {"markdown_generator": {"options": {"ignore_links": false, "ignore_images": false}}, "content_filter": {"type": "PruningContentFilter", "threshold": 0.45}}}'
           timeout: 10000
         continue-on-error: true
 
@@ -99,7 +99,7 @@ jobs:
         run: |
           # Extract markdown content from Crawl4AI response or use fallback
           if [ '${{ steps.crawlResult.outcome }}' = 'success' ] && [ '${{ steps.crawlResult.outputs.response }}' != '' ]; then
-            CONTENT=$(echo '${{ steps.crawlResult.outputs.response }}' | jq -r '.result.markdown // .result.cleaned_html // .result.raw_html // ""')
+            CONTENT=$(echo '${{ steps.crawlResult.outputs.response }}' | jq -r '.result.fit_markdown // .result.markdown // .result.cleaned_html // .result.raw_html // ""')
           else
             CONTENT=""
           fi
