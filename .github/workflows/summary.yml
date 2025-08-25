@@ -16,6 +16,13 @@ jobs:
       models: read
       contents: read
 
+    services:
+      crawl4ai:
+        image: unclecode/crawl4ai:0.7.3
+        ports:
+          - 11235:11235
+        options: --shm-size=1g
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,17 +39,117 @@ jobs:
             echo "URL validation failed: '$URL' is not a valid HTTP/HTTPS URL"
           fi
       
-      - name: Scrape with Firecrawl
-        id: firecrawlScrape
+      - name: Submit crawl job to Crawl4AI
+        id: crawlSubmit
         if: steps.urlValidation.outputs.valid == 'true'
         uses: fjogeleit/http-request-action@v1
         with:
-          url: 'https://api.firecrawl.dev/v2/scrape'
+          url: 'http://localhost:11235/crawl'
           method: 'POST'
           contentType: 'application/json'
-          customHeaders: '{"Authorization": "Bearer ${{ secrets.FIRECRAWL_API_KEY }}"}'
-          data: '{"url": "${{ steps.urlValidation.outputs.url }}", "formats": ["markdown"]}'
-          timeout: 30000
+          data: '{"urls": ["${{ steps.urlValidation.outputs.url }}"], "priority": 10}'
+          timeout: 10000
+        continue-on-error: true
+
+      - name: Wait for crawl completion
+        id: crawlResult
+        if: steps.crawlSubmit.outcome == 'success' && steps.crawlSubmit.outputs.response != ''
+        run: |
+          python3 << 'PYTHON_SCRIPT'
+          import json
+          import os
+          import sys
+          import time
+          import requests
+
+          def wait_for_completion():
+              """Wait for Crawl4AI task completion with robust error handling"""
+              
+              raw_response = os.environ.get('RAW_RESPONSE', '')
+              print(f"Raw response from crawl submit: {raw_response}")
+              
+              if not raw_response:
+                  print("Error: Empty response from crawl submit")
+                  return None
+              
+              try:
+                  response_data = json.loads(raw_response)
+                  task_id = response_data.get('task_id')
+                  
+                  if not task_id:
+                      print(f"Error: No task_id in response: {list(response_data.keys())}")
+                      return None
+                  
+                  print(f"Successfully extracted task_id: {task_id}")
+                  
+                  # Poll for completion (max 60 seconds)
+                  for attempt in range(1, 13):
+                      try:
+                          response = requests.get(f"http://localhost:11235/task/{task_id}", timeout=10)
+                          
+                          if response.status_code != 200:
+                              print(f"Attempt {attempt}: HTTP {response.status_code}")
+                              time.sleep(5)
+                              continue
+                          
+                          task_data = response.json()
+                          status = task_data.get('status', 'unknown')
+                          print(f"Attempt {attempt}: Task status: {status}")
+                          
+                          if status == 'completed':
+                              print("Task completed successfully")
+                              return task_data
+                          elif status == 'failed':
+                              error_msg = task_data.get('error', 'No error details')
+                              print(f"Task failed: {error_msg}")
+                              return None
+                          
+                          time.sleep(5)
+                          
+                      except requests.exceptions.RequestException as e:
+                          print(f"Attempt {attempt}: Request failed: {e}")
+                          time.sleep(5)
+                          continue
+                      except json.JSONDecodeError as e:
+                          print(f"Attempt {attempt}: Invalid JSON response: {e}")
+                          time.sleep(5)
+                          continue
+                  
+                  print("Task timeout after 60 seconds")
+                  return None
+                  
+              except json.JSONDecodeError as e:
+                  print(f"Error parsing crawl submit response: {e}")
+                  return None
+              except Exception as e:
+                  print(f"Unexpected error: {e}")
+                  return None
+
+          def set_github_output(name, value):
+              """Set GitHub Actions output"""
+              github_output = os.environ.get('GITHUB_OUTPUT')
+              if github_output:
+                  with open(github_output, 'a', encoding='utf-8') as f:
+                      delimiter = "RESPONSE_EOF"
+                      f.write(f"{name}<<{delimiter}\n")
+                      f.write(value)
+                      f.write(f"\n{delimiter}\n")
+
+          try:
+              result = wait_for_completion()
+              if result:
+                  set_github_output('response', json.dumps(result))
+                  print("Successfully set response output")
+              else:
+                  print("Failed to get valid response, continuing with empty result")
+                  set_github_output('response', '{}')
+          except Exception as e:
+              print(f"Error in wait_for_completion: {e}")
+              set_github_output('response', '{}')
+              
+          PYTHON_SCRIPT
+        env:
+          RAW_RESPONSE: ${{ steps.crawlSubmit.outputs.response }}
         continue-on-error: true
 
       - name: Determine prompt file
@@ -66,35 +173,36 @@ jobs:
           import sys
 
           def extract_content():
-              """Extract content from Firecrawl response with robust error handling"""
+              """Extract content from Crawl4AI response with robust error handling"""
               
               # Get environment variables
-              scrape_outcome = os.environ.get('SCRAPE_OUTCOME', '')
+              crawl_outcome = os.environ.get('CRAWL_OUTCOME', '')
               raw_response = os.environ.get('RAW_RESPONSE', '')
               fallback_url = os.environ.get('FALLBACK_URL', '')
               fallback_title = os.environ.get('FALLBACK_TITLE', '')
               
-              print(f"Firecrawl scrape outcome: {scrape_outcome}")
+              print(f"Crawl4AI completion outcome: {crawl_outcome}")
               
               content = ""
               
               # Try to extract content from successful response
-              if scrape_outcome == 'success' and raw_response:
+              if crawl_outcome == 'success' and raw_response:
                   try:
                       response_data = json.loads(raw_response)
                       print("Successfully parsed JSON response")
                       
-                      # Try multiple content fields
+                      # Try multiple content fields from Crawl4AI
+                      result = response_data.get('result', {})
                       content = (
-                          response_data.get('data', {}).get('markdown') or
-                          response_data.get('data', {}).get('content') or
-                          response_data.get('markdown') or
-                          response_data.get('content') or
+                          result.get('fit_markdown') or
+                          result.get('markdown') or
+                          result.get('cleaned_html') or
+                          result.get('raw_html') or
                           ""
                       )
                       
                       if content:
-                          print("Successfully extracted content from Firecrawl response")
+                          print("Successfully extracted content from Crawl4AI response")
                       else:
                           print("Warning: No content found in response data")
                           
@@ -104,7 +212,7 @@ jobs:
                   except Exception as e:
                       print(f"Warning: Unexpected error processing response: {e}")
               else:
-                  print("Warning: Firecrawl scrape step was not successful or response is empty")
+                  print("Warning: Crawl4AI completion step was not successful or response is empty")
               
               # Use fallback if no content extracted
               if not content:
@@ -159,8 +267,8 @@ jobs:
 
           PYTHON_SCRIPT
         env:
-          SCRAPE_OUTCOME: ${{ steps.firecrawlScrape.outcome }}
-          RAW_RESPONSE: ${{ steps.firecrawlScrape.outputs.response }}
+          CRAWL_OUTCOME: ${{ steps.crawlResult.outcome }}
+          RAW_RESPONSE: ${{ steps.crawlResult.outputs.response }}
           FALLBACK_URL: ${{ github.event.issue.body }}
           FALLBACK_TITLE: ${{ github.event.issue.title }}
 
