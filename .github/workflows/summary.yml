@@ -60,62 +60,109 @@ jobs:
       - name: Truncate content for token limit
         id: truncateContent
         run: |
-          set -e  # Exit on any error
-          
-          # Initialize content variable
-          CONTENT=""
-          
-          # Debug: Show response outcome
-          echo "Firecrawl scrape outcome: '${{ steps.firecrawlScrape.outcome }}'"
-          
-          # Extract markdown content from Firecrawl response with robust error handling
-          if [[ '${{ steps.firecrawlScrape.outcome }}' == 'success' ]]; then
-            # Get raw response and validate it
-            RAW_RESPONSE='${{ steps.firecrawlScrape.outputs.response }}'
-            
-            if [[ -n "$RAW_RESPONSE" && "$RAW_RESPONSE" != "null" && "$RAW_RESPONSE" != "" ]]; then
-              # Validate JSON before processing
-              if echo "$RAW_RESPONSE" | jq empty 2>/dev/null; then
-                # Extract content with multiple fallback options
-                CONTENT=$(echo "$RAW_RESPONSE" | jq -r '.data.markdown // .data.content // .markdown // .content // ""' 2>/dev/null || echo "")
-                echo "Successfully extracted content from Firecrawl response"
-              else
-                echo "Warning: Invalid JSON response from Firecrawl"
-                echo "Response preview: ${RAW_RESPONSE:0:200}..."
-              fi
-            else
-              echo "Warning: Empty or null response from Firecrawl"
-            fi
-          else
-            echo "Warning: Firecrawl scrape step was not successful"
-          fi
-          
-          # Use fallback if no content extracted
-          if [[ -z "$CONTENT" || "$CONTENT" == "null" ]]; then
-            echo "Using fallback content due to extraction failure"
-            FALLBACK_URL='${{ github.event.issue.body }}'
-            FALLBACK_TITLE='${{ github.event.issue.title }}'
-            CONTENT="URL: ${FALLBACK_URL}"$'\n'"Title: ${FALLBACK_TITLE}"$'\n'"Description: Content could not be retrieved from the URL. Please check if the URL is accessible and try again."
-          fi
-          
-          # Safely truncate content to stay under token limit
-          CONTENT_LENGTH=${#CONTENT}
-          echo "Original content length: $CONTENT_LENGTH characters"
-          
-          if [[ $CONTENT_LENGTH -gt 6000 ]]; then
-            TRUNCATED_CONTENT="${CONTENT:0:6000}... [Content truncated to fit token limit]"
-            echo "Content truncated from $CONTENT_LENGTH to 6000 characters"
-          else
-            TRUNCATED_CONTENT="$CONTENT"
-            echo "Content within limit, no truncation needed"
-          fi
-          
-          # Safely output content using proper escaping
-          {
-            echo "content<<CONTENT_EOF"
-            echo "$TRUNCATED_CONTENT"
-            echo "CONTENT_EOF"
-          } >> $GITHUB_OUTPUT
+          python3 << 'PYTHON_SCRIPT'
+          import json
+          import os
+          import sys
+
+          def extract_content():
+              """Extract content from Firecrawl response with robust error handling"""
+              
+              # Get environment variables
+              scrape_outcome = os.environ.get('SCRAPE_OUTCOME', '')
+              raw_response = os.environ.get('RAW_RESPONSE', '')
+              fallback_url = os.environ.get('FALLBACK_URL', '')
+              fallback_title = os.environ.get('FALLBACK_TITLE', '')
+              
+              print(f"Firecrawl scrape outcome: {scrape_outcome}")
+              
+              content = ""
+              
+              # Try to extract content from successful response
+              if scrape_outcome == 'success' and raw_response:
+                  try:
+                      response_data = json.loads(raw_response)
+                      print("Successfully parsed JSON response")
+                      
+                      # Try multiple content fields
+                      content = (
+                          response_data.get('data', {}).get('markdown') or
+                          response_data.get('data', {}).get('content') or
+                          response_data.get('markdown') or
+                          response_data.get('content') or
+                          ""
+                      )
+                      
+                      if content:
+                          print("Successfully extracted content from Firecrawl response")
+                      else:
+                          print("Warning: No content found in response data")
+                          
+                  except json.JSONDecodeError as e:
+                      print(f"Warning: Failed to parse JSON response: {e}")
+                      print(f"Response preview: {raw_response[:200]}...")
+                  except Exception as e:
+                      print(f"Warning: Unexpected error processing response: {e}")
+              else:
+                  print("Warning: Firecrawl scrape step was not successful or response is empty")
+              
+              # Use fallback if no content extracted
+              if not content:
+                  print("Using fallback content due to extraction failure")
+                  content = f"URL: {fallback_url}\nTitle: {fallback_title}\nDescription: Content could not be retrieved from the URL. Please check if the URL is accessible and try again."
+              
+              return content
+
+          def truncate_content(content, max_length=6000):
+              """Safely truncate content to stay under token limit"""
+              
+              content_length = len(content)
+              print(f"Original content length: {content_length} characters")
+              
+              if content_length > max_length:
+                  truncated = content[:max_length] + "... [Content truncated to fit token limit]"
+                  print(f"Content truncated from {content_length} to {max_length} characters")
+                  return truncated
+              else:
+                  print("Content within limit, no truncation needed")
+                  return content
+
+          def set_github_output(name, value):
+              """Safely set GitHub Actions output"""
+              
+              github_output = os.environ.get('GITHUB_OUTPUT')
+              if not github_output:
+                  print("Warning: GITHUB_OUTPUT not set")
+                  return
+              
+              delimiter = "CONTENT_EOF_DELIMITER"
+              with open(github_output, 'a', encoding='utf-8') as f:
+                  f.write(f"{name}<<{delimiter}\n")
+                  f.write(value)
+                  f.write(f"\n{delimiter}\n")
+
+          try:
+              # Extract and process content
+              content = extract_content()
+              truncated_content = truncate_content(content)
+              
+              # Set output for next step
+              set_github_output('content', truncated_content)
+              print("Successfully set content output for AI inference")
+              
+          except Exception as e:
+              print(f"Error: {e}")
+              # Set fallback content on error
+              fallback = f"URL: {os.environ.get('FALLBACK_URL', '')}\nTitle: {os.environ.get('FALLBACK_TITLE', '')}\nDescription: Error processing content."
+              set_github_output('content', fallback)
+              sys.exit(0)  # Don't fail the workflow, continue with fallback
+
+          PYTHON_SCRIPT
+        env:
+          SCRAPE_OUTCOME: ${{ steps.firecrawlScrape.outcome }}
+          RAW_RESPONSE: ${{ steps.firecrawlScrape.outputs.response }}
+          FALLBACK_URL: ${{ github.event.issue.body }}
+          FALLBACK_TITLE: ${{ github.event.issue.title }}
 
       - name: Run AI inference
         id: inference
