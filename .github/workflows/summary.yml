@@ -60,25 +60,62 @@ jobs:
       - name: Truncate content for token limit
         id: truncateContent
         run: |
-          # Extract markdown content from Firecrawl response or use fallback
-          if [ '${{ steps.firecrawlScrape.outcome }}' = 'success' ] && [ '${{ steps.firecrawlScrape.outputs.response }}' != '' ]; then
-            CONTENT=$(echo '${{ steps.firecrawlScrape.outputs.response }}' | jq -r '.data.markdown // .data.content // ""')
+          set -e  # Exit on any error
+          
+          # Initialize content variable
+          CONTENT=""
+          
+          # Debug: Show response outcome
+          echo "Firecrawl scrape outcome: '${{ steps.firecrawlScrape.outcome }}'"
+          
+          # Extract markdown content from Firecrawl response with robust error handling
+          if [[ '${{ steps.firecrawlScrape.outcome }}' == 'success' ]]; then
+            # Get raw response and validate it
+            RAW_RESPONSE='${{ steps.firecrawlScrape.outputs.response }}'
+            
+            if [[ -n "$RAW_RESPONSE" && "$RAW_RESPONSE" != "null" && "$RAW_RESPONSE" != "" ]]; then
+              # Validate JSON before processing
+              if echo "$RAW_RESPONSE" | jq empty 2>/dev/null; then
+                # Extract content with multiple fallback options
+                CONTENT=$(echo "$RAW_RESPONSE" | jq -r '.data.markdown // .data.content // .markdown // .content // ""' 2>/dev/null || echo "")
+                echo "Successfully extracted content from Firecrawl response"
+              else
+                echo "Warning: Invalid JSON response from Firecrawl"
+                echo "Response preview: ${RAW_RESPONSE:0:200}..."
+              fi
+            else
+              echo "Warning: Empty or null response from Firecrawl"
+            fi
           else
-            CONTENT=""
+            echo "Warning: Firecrawl scrape step was not successful"
           fi
           
           # Use fallback if no content extracted
-          if [ -z "$CONTENT" ] || [ "$CONTENT" = "null" ]; then
-            CONTENT="${{ format('URL: {0}\nTitle: {1}\nDescription: {2}', github.event.issue.body, github.event.issue.title, 'Content could not be retrieved from the URL. Please check if the URL is accessible and try again.') }}"
+          if [[ -z "$CONTENT" || "$CONTENT" == "null" ]]; then
+            echo "Using fallback content due to extraction failure"
+            FALLBACK_URL='${{ github.event.issue.body }}'
+            FALLBACK_TITLE='${{ github.event.issue.title }}'
+            CONTENT="URL: ${FALLBACK_URL}"$'\n'"Title: ${FALLBACK_TITLE}"$'\n'"Description: Content could not be retrieved from the URL. Please check if the URL is accessible and try again."
           fi
-          # Truncate to approximately 6000 characters to stay under 8000 token limit
-          TRUNCATED_CONTENT=$(echo "$CONTENT" | head -c 6000)
-          if [[ ${#CONTENT} -gt 6000 ]]; then
-            TRUNCATED_CONTENT="$TRUNCATED_CONTENT... [Content truncated to fit token limit]"
+          
+          # Safely truncate content to stay under token limit
+          CONTENT_LENGTH=${#CONTENT}
+          echo "Original content length: $CONTENT_LENGTH characters"
+          
+          if [[ $CONTENT_LENGTH -gt 6000 ]]; then
+            TRUNCATED_CONTENT="${CONTENT:0:6000}... [Content truncated to fit token limit]"
+            echo "Content truncated from $CONTENT_LENGTH to 6000 characters"
+          else
+            TRUNCATED_CONTENT="$CONTENT"
+            echo "Content within limit, no truncation needed"
           fi
-          echo "content<<EOF" >> $GITHUB_OUTPUT
-          echo "$TRUNCATED_CONTENT" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          
+          # Safely output content using proper escaping
+          {
+            echo "content<<CONTENT_EOF"
+            echo "$TRUNCATED_CONTENT"
+            echo "CONTENT_EOF"
+          } >> $GITHUB_OUTPUT
 
       - name: Run AI inference
         id: inference
