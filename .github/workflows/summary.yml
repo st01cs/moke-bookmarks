@@ -1,0 +1,107 @@
+name: Summarize new issues
+run-name: Summarize ${{ github.event.issue.title }}[${{ github.event.issue.number }}]
+
+on:
+  issues:
+    types: [opened]
+
+env:
+  SUMMARY_LANGUAGE: ${{ vars.SUMMARY_LANGUAGE || 'cn' }}
+
+jobs:
+  summary:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      models: read
+      contents: read
+
+    services:
+      crawl4ai:
+        image: unclecode/crawl4ai:0.7.3
+        ports:
+          - 11235:11235
+        options: --shm-size=1g
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Validate URL format
+        id: urlValidation
+        run: |
+          URL="${{ github.event.issue.body }}"
+          if [[ $URL =~ ^https?:// ]]; then
+            echo "valid=true" >> $GITHUB_OUTPUT
+            echo "url=$URL" >> $GITHUB_OUTPUT
+          else
+            echo "valid=false" >> $GITHUB_OUTPUT
+            echo "URL validation failed: '$URL' is not a valid HTTP/HTTPS URL"
+          fi
+      
+      - name: Submit crawl job to Crawl4AI
+        id: crawlSubmit
+        if: steps.urlValidation.outputs.valid == 'true'
+        uses: fjogeleit/http-request-action@v1
+        with:
+          url: 'http://localhost:11235/crawl'
+          method: 'POST'
+          contentType: 'application/json'
+          data: '{"urls": ["${{ steps.urlValidation.outputs.url }}"], "priority": 10, "crawler_params": {"markdown_generator": {"options": {"ignore_links": false, "ignore_images": false}}, "content_filter": {"type": "PruningContentFilter", "threshold": 0.45}}}'
+          timeout: 10000
+        continue-on-error: true
+
+      - name: Wait for crawl completion
+        id: crawlResult
+        if: steps.crawlSubmit.outcome == 'success' && steps.crawlSubmit.outputs.response != ''
+        run: |
+          # Write response to temp file using cat with heredoc to avoid shell escaping issues
+          cat > /tmp/crawl_submit_response.json << 'RESPONSE_EOF'
+          ${{ steps.crawlSubmit.outputs.response }}
+          RESPONSE_EOF
+          # Execute the Python script
+          python3 scripts/wait_crawl.py
+        continue-on-error: true
+
+      - name: Determine prompt file
+        id: promptFile
+        run: |
+          if [[ "${{ env.SUMMARY_LANGUAGE }}" == "en" ]]; then
+            echo "file=./.github/prompts/summary-system-en.txt" >> $GITHUB_OUTPUT
+          else
+            echo "file=./.github/prompts/summary-system-cn.txt" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Rate limiting delay
+        run: sleep 2
+
+      - name: Truncate content for token limit
+        id: truncateContent
+        run: |
+          # Write crawl result response to temp file to avoid environment variable length limits
+          cat > /tmp/crawl_result_response.json << 'RESULT_EOF'
+          ${{ steps.crawlResult.outputs.response }}
+          RESULT_EOF
+          # Execute the Python script
+          python3 scripts/truncate_content.py
+        env:
+          CRAWL_OUTCOME: ${{ steps.crawlResult.outcome }}
+          FALLBACK_URL: ${{ github.event.issue.body }}
+          FALLBACK_TITLE: ${{ github.event.issue.title }}
+
+      - name: Run AI inference
+        id: inference
+        uses: actions/ai-inference@v1
+        with:
+          max-tokens: 2000
+          system-prompt-file: ${{ steps.promptFile.outputs.file }}
+          prompt: |
+            ${{ steps.truncateContent.outputs.content }}
+
+      - name: Comment with AI summary
+        run: |
+          echo "${{ steps.inference.outputs.response }}" | gh issue comment $ISSUE_NUMBER --body-file -
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RESPONSE: ${{ steps.inference.outputs.response }}
