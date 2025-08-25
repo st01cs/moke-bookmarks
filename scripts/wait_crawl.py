@@ -33,11 +33,33 @@ def wait_for_completion():
     
     try:
         response_data = json.loads(raw_response)
-        task_id = response_data.get('task_id')
         
-        if not task_id:
-            print(f"Error: No task_id in response: {list(response_data.keys())}")
+        # Debug: Show the response structure
+        print(f"Response keys: {list(response_data.keys())}")
+        
+        # Check if the response indicates success
+        success = response_data.get('success', False)
+        if not success:
+            print(f"Error: Crawl request was not successful: {response_data}")
             return None
+        
+        # Try to get task_id from different possible locations
+        task_id = (
+            response_data.get('task_id') or
+            response_data.get('id') or
+            response_data.get('job_id') or
+            response_data.get('results', {}).get('task_id') if isinstance(response_data.get('results'), dict) else None
+        )
+        
+        # If still no task_id, check if we already have results (synchronous response)
+        if not task_id:
+            results = response_data.get('results')
+            if results:
+                print("Received synchronous response with results, no polling needed")
+                return response_data  # Return the full response as it contains results
+            else:
+                print(f"Error: No task_id found in response and no results: {list(response_data.keys())}")
+                return None
         
         print(f"Successfully extracted task_id: {task_id}")
         
