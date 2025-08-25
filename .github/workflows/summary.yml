@@ -16,13 +16,6 @@ jobs:
       models: read
       contents: read
 
-    services:
-      crawl4ai:
-        image: unclecode/crawl4ai:0.7.3
-        ports:
-          - 11235:11235
-        options: --shm-size=1g
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -39,88 +32,17 @@ jobs:
             echo "URL validation failed: '$URL' is not a valid HTTP/HTTPS URL"
           fi
       
-      - name: Submit crawl job to Crawl4AI
-        id: crawlSubmit
+      - name: Scrape with Firecrawl
+        id: firecrawlScrape
         if: steps.urlValidation.outputs.valid == 'true'
         uses: fjogeleit/http-request-action@v1
         with:
-          url: 'http://localhost:11235/crawl'
+          url: 'https://api.firecrawl.dev/v2/scrape'
           method: 'POST'
           contentType: 'application/json'
-          data: '{"urls": ["${{ steps.urlValidation.outputs.url }}"], "priority": 10, "crawler_params": {"markdown_generator": {"options": {"ignore_links": false, "ignore_images": false}}, "content_filter": {"type": "PruningContentFilter", "threshold": 0.45}}}'
-          timeout: 10000
-        continue-on-error: true
-
-      - name: Wait for crawl completion
-        id: crawlResult
-        if: steps.crawlSubmit.outcome == 'success' && steps.crawlSubmit.outputs.response != ''
-        run: |
-          # Debug: Show raw response
-          echo "Raw response from crawl submit:"
-          echo '${{ steps.crawlSubmit.outputs.response }}'
-          
-          # Validate and extract task_id with error handling
-          RESPONSE='${{ steps.crawlSubmit.outputs.response }}'
-          if [ -z "$RESPONSE" ] || [ "$RESPONSE" = "null" ]; then
-            echo "Error: Empty or null response from crawl submit"
-            exit 1
-          fi
-          
-          # Check if response contains valid JSON
-          if ! echo "$RESPONSE" | jq empty 2>/dev/null; then
-            echo "Error: Invalid JSON response from crawl submit"
-            echo "Response content: $RESPONSE"
-            exit 1
-          fi
-          
-          TASK_ID=$(echo "$RESPONSE" | jq -r '.task_id // empty')
-          if [ -z "$TASK_ID" ] || [ "$TASK_ID" = "null" ]; then
-            echo "Error: No task_id found in response"
-            echo "Response structure: $(echo "$RESPONSE" | jq keys 2>/dev/null || echo "Failed to parse keys")"
-            exit 1
-          fi
-          
-          echo "task_id=$TASK_ID" >> $GITHUB_OUTPUT
-          echo "Successfully extracted task_id: $TASK_ID"
-          
-          # Wait for task completion (max 60 seconds)
-          for i in {1..12}; do
-            POLL_RESPONSE=$(curl -s "http://localhost:11235/task/$TASK_ID")
-            
-            # Check if curl succeeded and returned valid JSON
-            if [ $? -ne 0 ] || [ -z "$POLL_RESPONSE" ]; then
-              echo "Attempt $i: Failed to get response from task endpoint"
-              sleep 5
-              continue
-            fi
-            
-            if ! echo "$POLL_RESPONSE" | jq empty 2>/dev/null; then
-              echo "Attempt $i: Invalid JSON response from task endpoint"
-              echo "Response content: $POLL_RESPONSE"
-              sleep 5
-              continue
-            fi
-            
-            STATUS=$(echo "$POLL_RESPONSE" | jq -r '.status // "unknown"')
-            echo "Attempt $i: Task status: $STATUS"
-            
-            if [ "$STATUS" = "completed" ]; then
-              echo "Task completed successfully"
-              echo "response<<EOF" >> $GITHUB_OUTPUT
-              echo "$POLL_RESPONSE" >> $GITHUB_OUTPUT
-              echo "EOF" >> $GITHUB_OUTPUT
-              exit 0
-            elif [ "$STATUS" = "failed" ]; then
-              echo "Task failed"
-              echo "Error details: $(echo "$POLL_RESPONSE" | jq -r '.error // "No error details"')"
-              exit 1
-            fi
-            
-            sleep 5
-          done
-          
-          echo "Task timeout after 60 seconds"
-          exit 1
+          customHeaders: '{"Authorization": "Bearer ${{ secrets.FIRECRAWL_API_KEY }}"}'
+          data: '{"url": "${{ steps.urlValidation.outputs.url }}", "formats": ["markdown"]}'
+          timeout: 30000
         continue-on-error: true
 
       - name: Determine prompt file
@@ -138,9 +60,9 @@ jobs:
       - name: Truncate content for token limit
         id: truncateContent
         run: |
-          # Extract markdown content from Crawl4AI response or use fallback
-          if [ '${{ steps.crawlResult.outcome }}' = 'success' ] && [ '${{ steps.crawlResult.outputs.response }}' != '' ]; then
-            CONTENT=$(echo '${{ steps.crawlResult.outputs.response }}' | jq -r '.result.fit_markdown // .result.markdown // .result.cleaned_html // .result.raw_html // ""')
+          # Extract markdown content from Firecrawl response or use fallback
+          if [ '${{ steps.firecrawlScrape.outcome }}' = 'success' ] && [ '${{ steps.firecrawlScrape.outputs.response }}' != '' ]; then
+            CONTENT=$(echo '${{ steps.firecrawlScrape.outputs.response }}' | jq -r '.data.markdown // .data.content // ""')
           else
             CONTENT=""
           fi
