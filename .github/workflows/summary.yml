@@ -55,8 +55,10 @@ jobs:
         id: crawlResult
         if: steps.crawlSubmit.outcome == 'success' && steps.crawlSubmit.outputs.response != ''
         run: |
-          # Write response to temp file to avoid environment variable length limits
-          echo '${{ steps.crawlSubmit.outputs.response }}' > /tmp/crawl_submit_response.json
+          # Write response to temp file using cat with heredoc to avoid shell escaping issues
+          cat > /tmp/crawl_submit_response.json << 'RESPONSE_EOF'
+          ${{ steps.crawlSubmit.outputs.response }}
+          RESPONSE_EOF
           # Execute the Python script
           python3 scripts/wait_crawl.py
         continue-on-error: true
