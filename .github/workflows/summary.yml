@@ -16,6 +16,13 @@ jobs:
       models: read
       contents: read
 
+    services:
+      crawl4ai:
+        image: unclecode/crawl4ai:0.7.3
+        ports:
+          - 11235:11235
+        options: --shm-size=1g
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -32,14 +39,47 @@ jobs:
             echo "URL validation failed: '$URL' is not a valid HTTP/HTTPS URL"
           fi
       
-      - name: Jina reader
-        id: jinaReader
+      - name: Submit crawl job to Crawl4AI
+        id: crawlSubmit
         if: steps.urlValidation.outputs.valid == 'true'
         uses: fjogeleit/http-request-action@v1
         with:
-          url: 'https://r.jina.ai/${{ steps.urlValidation.outputs.url }}'
-          method: 'GET'
-          timeout: 30000
+          url: 'http://localhost:11235/crawl'
+          method: 'POST'
+          contentType: 'application/json'
+          data: '{"urls": ["${{ steps.urlValidation.outputs.url }}"], "priority": 10}'
+          timeout: 10000
+        continue-on-error: true
+
+      - name: Wait for crawl completion
+        id: crawlResult
+        if: steps.crawlSubmit.outcome == 'success' && steps.crawlSubmit.outputs.response != ''
+        run: |
+          TASK_ID=$(echo '${{ steps.crawlSubmit.outputs.response }}' | jq -r '.task_id')
+          echo "task_id=$TASK_ID" >> $GITHUB_OUTPUT
+          
+          # Wait for task completion (max 60 seconds)
+          for i in {1..12}; do
+            RESPONSE=$(curl -s "http://localhost:11235/task/$TASK_ID")
+            STATUS=$(echo "$RESPONSE" | jq -r '.status')
+            
+            if [ "$STATUS" = "completed" ]; then
+              echo "Task completed successfully"
+              echo "response<<EOF" >> $GITHUB_OUTPUT
+              echo "$RESPONSE" >> $GITHUB_OUTPUT
+              echo "EOF" >> $GITHUB_OUTPUT
+              exit 0
+            elif [ "$STATUS" = "failed" ]; then
+              echo "Task failed"
+              exit 1
+            fi
+            
+            echo "Task status: $STATUS, waiting..."
+            sleep 5
+          done
+          
+          echo "Task timeout after 60 seconds"
+          exit 1
         continue-on-error: true
 
       - name: Determine prompt file
@@ -57,7 +97,17 @@ jobs:
       - name: Truncate content for token limit
         id: truncateContent
         run: |
-          CONTENT="${{ steps.jinaReader.outputs.response || format('URL: {0}\nTitle: {1}\nDescription: {2}', github.event.issue.body, github.event.issue.title, 'Content could not be retrieved from the URL. Please check if the URL is accessible and try again.') }}"
+          # Extract markdown content from Crawl4AI response or use fallback
+          if [ '${{ steps.crawlResult.outcome }}' = 'success' ] && [ '${{ steps.crawlResult.outputs.response }}' != '' ]; then
+            CONTENT=$(echo '${{ steps.crawlResult.outputs.response }}' | jq -r '.result.markdown // .result.cleaned_html // .result.raw_html // ""')
+          else
+            CONTENT=""
+          fi
+          
+          # Use fallback if no content extracted
+          if [ -z "$CONTENT" ] || [ "$CONTENT" = "null" ]; then
+            CONTENT="${{ format('URL: {0}\nTitle: {1}\nDescription: {2}', github.event.issue.body, github.event.issue.title, 'Content could not be retrieved from the URL. Please check if the URL is accessible and try again.') }}"
+          fi
           # Truncate to approximately 6000 characters to stay under 8000 token limit
           TRUNCATED_CONTENT=$(echo "$CONTENT" | head -c 6000)
           if [[ ${#CONTENT} -gt 6000 ]]; then
