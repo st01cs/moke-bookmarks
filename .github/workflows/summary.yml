@@ -54,6 +54,19 @@ jobs:
       - name: Rate limiting delay
         run: sleep 2
 
+      - name: Truncate content for token limit
+        id: truncateContent
+        run: |
+          CONTENT="${{ steps.jinaReader.outputs.response || format('URL: {0}\nTitle: {1}\nDescription: {2}', github.event.issue.body, github.event.issue.title, 'Content could not be retrieved from the URL. Please check if the URL is accessible and try again.') }}"
+          # Truncate to approximately 6000 characters to stay under 8000 token limit
+          TRUNCATED_CONTENT=$(echo "$CONTENT" | head -c 6000)
+          if [[ ${#CONTENT} -gt 6000 ]]; then
+            TRUNCATED_CONTENT="$TRUNCATED_CONTENT... [Content truncated to fit token limit]"
+          fi
+          echo "content<<EOF" >> $GITHUB_OUTPUT
+          echo "$TRUNCATED_CONTENT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Run AI inference
         id: inference
         uses: actions/ai-inference@v1
@@ -61,7 +74,7 @@ jobs:
           max-tokens: 2000
           system-prompt-file: ${{ steps.promptFile.outputs.file }}
           prompt: |
-            ${{ steps.jinaReader.outputs.response || format('URL: {0}\nTitle: {1}\nDescription: {2}', github.event.issue.body, github.event.issue.title, 'Content could not be retrieved from the URL. Please check if the URL is accessible and try again.') }}
+            ${{ steps.truncateContent.outputs.content }}
 
       - name: Comment with AI summary
         run: |
