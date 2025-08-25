@@ -100,6 +100,26 @@ def extract_content():
 def truncate_content(content, max_length=6000):
     """Safely truncate content to stay under token limit"""
     
+    # Handle case where content might be a dict instead of string
+    if isinstance(content, dict):
+        print("Content is a dict, extracting raw_markdown")
+        # Try to get raw_markdown or other markdown fields from dict
+        content = (
+            content.get('raw_markdown') or
+            content.get('fit_markdown') or
+            content.get('markdown') or
+            content.get('cleaned_html') or
+            content.get('raw_html') or
+            content.get('html') or
+            str(content)  # Fallback to string representation
+        )
+        print(f"Extracted content type: {type(content)}")
+    
+    # Ensure content is a string
+    if not isinstance(content, str):
+        print(f"Converting content from {type(content)} to string")
+        content = str(content)
+    
     content_length = len(content)
     print(f"Original content length: {content_length} characters")
     
