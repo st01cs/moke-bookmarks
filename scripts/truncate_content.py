@@ -45,6 +45,14 @@ def extract_content():
                 result = response_data.get('result', {})
                 results = response_data.get('results', {})
                 
+                # Handle results as array - get first item if it's an array
+                if isinstance(results, list) and len(results) > 0:
+                    print(f"Results is an array with {len(results)} items, using first item")
+                    results = results[0]
+                elif isinstance(results, list):
+                    print("Results is an empty array")
+                    results = {}
+                
                 # For synchronous responses, results might be at top level
                 if isinstance(results, dict) and results:
                     content = (
@@ -52,6 +60,7 @@ def extract_content():
                         results.get('markdown') or
                         results.get('cleaned_html') or
                         results.get('raw_html') or
+                        results.get('html') or
                         ""
                     )
                 
@@ -62,6 +71,7 @@ def extract_content():
                         result.get('markdown') or
                         result.get('cleaned_html') or
                         result.get('raw_html') or
+                        result.get('html') or
                         ""
                     )
                 
