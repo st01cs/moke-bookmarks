@@ -54,9 +54,11 @@ jobs:
       - name: Wait for crawl completion
         id: crawlResult
         if: steps.crawlSubmit.outcome == 'success' && steps.crawlSubmit.outputs.response != ''
-        run: python3 scripts/wait_crawl.py
-        env:
-          RAW_RESPONSE: ${{ steps.crawlSubmit.outputs.response }}
+        run: |
+          # Write response to temp file to avoid environment variable length limits
+          echo '${{ steps.crawlSubmit.outputs.response }}' > /tmp/crawl_submit_response.json
+          # Execute the Python script
+          python3 scripts/wait_crawl.py
         continue-on-error: true
 
       - name: Determine prompt file

@@ -6,15 +6,26 @@ This script polls a Crawl4AI task until completion and sets GitHub Actions outpu
 
 import json
 import os
-import sys
 import time
 import requests
 
 def wait_for_completion():
     """Wait for Crawl4AI task completion with robust error handling"""
     
-    raw_response = os.environ.get('RAW_RESPONSE', '')
-    print(f"Raw response from crawl submit: {raw_response}")
+    # Read raw response from temp file instead of environment variable
+    temp_file = '/tmp/crawl_submit_response.json'
+    
+    try:
+        with open(temp_file, 'r', encoding='utf-8') as f:
+            raw_response = f.read().strip()
+    except FileNotFoundError:
+        print(f"Error: Response file {temp_file} not found")
+        return None
+    except Exception as e:
+        print(f"Error reading response file: {e}")
+        return None
+    
+    print(f"Raw response from crawl submit (length: {len(raw_response)} chars)")
     
     if not raw_response:
         print("Error: Empty response from crawl submit")
