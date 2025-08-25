@@ -55,26 +55,67 @@ jobs:
         id: crawlResult
         if: steps.crawlSubmit.outcome == 'success' && steps.crawlSubmit.outputs.response != ''
         run: |
-          TASK_ID=$(echo '${{ steps.crawlSubmit.outputs.response }}' | jq -r '.task_id')
+          # Debug: Show raw response
+          echo "Raw response from crawl submit:"
+          echo '${{ steps.crawlSubmit.outputs.response }}'
+          
+          # Validate and extract task_id with error handling
+          RESPONSE='${{ steps.crawlSubmit.outputs.response }}'
+          if [ -z "$RESPONSE" ] || [ "$RESPONSE" = "null" ]; then
+            echo "Error: Empty or null response from crawl submit"
+            exit 1
+          fi
+          
+          # Check if response contains valid JSON
+          if ! echo "$RESPONSE" | jq empty 2>/dev/null; then
+            echo "Error: Invalid JSON response from crawl submit"
+            echo "Response content: $RESPONSE"
+            exit 1
+          fi
+          
+          TASK_ID=$(echo "$RESPONSE" | jq -r '.task_id // empty')
+          if [ -z "$TASK_ID" ] || [ "$TASK_ID" = "null" ]; then
+            echo "Error: No task_id found in response"
+            echo "Response structure: $(echo "$RESPONSE" | jq keys 2>/dev/null || echo "Failed to parse keys")"
+            exit 1
+          fi
+          
           echo "task_id=$TASK_ID" >> $GITHUB_OUTPUT
+          echo "Successfully extracted task_id: $TASK_ID"
           
           # Wait for task completion (max 60 seconds)
           for i in {1..12}; do
-            RESPONSE=$(curl -s "http://localhost:11235/task/$TASK_ID")
-            STATUS=$(echo "$RESPONSE" | jq -r '.status')
+            POLL_RESPONSE=$(curl -s "http://localhost:11235/task/$TASK_ID")
+            
+            # Check if curl succeeded and returned valid JSON
+            if [ $? -ne 0 ] || [ -z "$POLL_RESPONSE" ]; then
+              echo "Attempt $i: Failed to get response from task endpoint"
+              sleep 5
+              continue
+            fi
+            
+            if ! echo "$POLL_RESPONSE" | jq empty 2>/dev/null; then
+              echo "Attempt $i: Invalid JSON response from task endpoint"
+              echo "Response content: $POLL_RESPONSE"
+              sleep 5
+              continue
+            fi
+            
+            STATUS=$(echo "$POLL_RESPONSE" | jq -r '.status // "unknown"')
+            echo "Attempt $i: Task status: $STATUS"
             
             if [ "$STATUS" = "completed" ]; then
               echo "Task completed successfully"
               echo "response<<EOF" >> $GITHUB_OUTPUT
-              echo "$RESPONSE" >> $GITHUB_OUTPUT
+              echo "$POLL_RESPONSE" >> $GITHUB_OUTPUT
               echo "EOF" >> $GITHUB_OUTPUT
               exit 0
             elif [ "$STATUS" = "failed" ]; then
               echo "Task failed"
+              echo "Error details: $(echo "$POLL_RESPONSE" | jq -r '.error // "No error details"')"
               exit 1
             fi
             
-            echo "Task status: $STATUS, waiting..."
             sleep 5
           done
           
