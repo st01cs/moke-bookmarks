@@ -102,11 +102,15 @@ jobs:
 
       - name: Comment with AI summary
         run: |
-          echo "${{ steps.inference.outputs.response }}" | gh issue comment $ISSUE_NUMBER --body-file -
+          # Write AI response to temp file to handle special characters
+          cat > /tmp/ai_summary_response.txt << 'SUMMARY_EOF'
+          ${{ steps.inference.outputs.response }}
+          SUMMARY_EOF
+          # Use Python script to post comment safely
+          python3 scripts/post_comment.py /tmp/ai_summary_response.txt $ISSUE_NUMBER
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-          RESPONSE: ${{ steps.inference.outputs.response }}
           
       - name: Run AI inference for keywords
         id: inference-keywords
@@ -119,9 +123,13 @@ jobs:
   
       - name: Comment with AI keywords
         run: |
-          echo "${{ steps.inference-keywords.outputs.response }}" | gh issue comment $ISSUE_NUMBER --body-file -
+          # Write AI response to temp file to handle special characters
+          cat > /tmp/ai_keywords_response.txt << 'KEYWORDS_EOF'
+          ${{ steps.inference-keywords.outputs.response }}
+          KEYWORDS_EOF
+          # Use Python script to post comment safely
+          python3 scripts/post_comment.py /tmp/ai_keywords_response.txt $ISSUE_NUMBER
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-          RESPONSE: ${{ steps.inference.outputs.response }}
   
