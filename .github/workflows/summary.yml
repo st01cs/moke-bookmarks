@@ -67,9 +67,11 @@ jobs:
         id: promptFile
         run: |
           if [[ "${{ env.SUMMARY_LANGUAGE }}" == "en" ]]; then
-            echo "file=./.github/prompts/summary-system-en.txt" >> $GITHUB_OUTPUT
+            echo "summary-file=./.github/prompts/summary-system-en.txt" >> $GITHUB_OUTPUT
+            echo "keywords-file=./.github/prompts/keywords-system-en.txt" >> $GITHUB_OUTPUT
           else
-            echo "file=./.github/prompts/summary-system-cn.txt" >> $GITHUB_OUTPUT
+            echo "summary-file=./.github/prompts/summary-system-cn.txt" >> $GITHUB_OUTPUT
+            echo "keywords-file=./.github/prompts/keywords-system-cn.txt" >> $GITHUB_OUTPUT
           fi
 
       - name: Rate limiting delay
@@ -89,12 +91,12 @@ jobs:
           FALLBACK_URL: ${{ github.event.issue.body }}
           FALLBACK_TITLE: ${{ github.event.issue.title }}
 
-      - name: Run AI inference
+      - name: Run AI inference for summary
         id: inference
         uses: actions/ai-inference@v1
         with:
           max-tokens: 2000
-          system-prompt-file: ${{ steps.promptFile.outputs.file }}
+          system-prompt-file: ${{ steps.promptFile.outputs.summary-file }}
           prompt: |
             ${{ steps.truncateContent.outputs.content }}
 
@@ -105,3 +107,21 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           RESPONSE: ${{ steps.inference.outputs.response }}
+          
+      - name: Run AI inference for keywords
+        id: inference-keywords
+        uses: actions/ai-inference@v1
+        with:
+          max-tokens: 100
+          system-prompt-file: ${{ steps.promptFile.outputs.keywords-file }}
+          prompt: |
+            ${{ steps.truncateContent.outputs.content }}
+  
+      - name: Comment with AI keywords
+        run: |
+          echo "${{ steps.inference-keywords.outputs.response }}" | gh issue comment $ISSUE_NUMBER --body-file -
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RESPONSE: ${{ steps.inference.outputs.response }}
+  
