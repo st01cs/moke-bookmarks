@@ -90,6 +90,7 @@ jobs:
           CRAWL_OUTCOME: ${{ steps.crawlResult.outcome }}
           FALLBACK_URL: ${{ github.event.issue.body }}
           FALLBACK_TITLE: ${{ github.event.issue.title }}
+          TRUNCATE_CONTENT_MAX_LENGTH: ${{ vars.TRUNCATE_CONTENT_MAX_LENGTH }}
 
       - name: Run AI inference for summary
         id: inference

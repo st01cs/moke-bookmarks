@@ -97,8 +97,14 @@ def extract_content():
     
     return content
 
-def truncate_content(content, max_length=6000):
+def truncate_content(content, max_length=None):
     """Safely truncate content to stay under token limit"""
+    
+    # Get max_length from environment variable or use default
+    if max_length is None:
+        max_length = int(os.environ.get('TRUNCATE_CONTENT_MAX_LENGTH', 6000))
+    
+    print(f"Using max_length: {max_length}")
     
     # Handle case where content might be a dict instead of string
     if isinstance(content, dict):
