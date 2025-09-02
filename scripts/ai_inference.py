@@ -120,7 +120,7 @@ def main():
     """Main execution function"""
     
     # Get configuration from environment
-    provider = os.environ.get('AI_PROVIDER', '').lower()
+    provider = os.environ.get('AI_PROVIDER', 'openai').lower()
     api_key = os.environ.get('AI_API_KEY', '')
     base_url = os.environ.get('AI_BASE_URL', 'https://api.openai.com/v1')
     model = os.environ.get('AI_MODEL', 'gpt-3.5-turbo')
