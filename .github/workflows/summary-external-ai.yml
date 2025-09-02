@@ -14,7 +14,7 @@ env:
 jobs:
   summary:
     runs-on: ubuntu-latest
-    if: ${{ vars.AI_MODEL != '' && secrets.AI_API_KEY != '' }}
+    if: ${{ vars.AI_MODEL != '' && vars.AI_BASE_URL != '' }}
     permissions:
       issues: write
       contents: read
