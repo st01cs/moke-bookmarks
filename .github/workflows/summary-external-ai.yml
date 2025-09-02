@@ -1,5 +1,5 @@
-name: Summarize new issues
-run-name: Summarize ${{ github.event.issue.title }}[${{ github.event.issue.number }}]
+name: Summarize new issues (External AI)
+run-name: Summarize ${{ github.event.issue.title }}[${{ github.event.issue.number }}] with external AI
 
 on:
   issues:
@@ -7,13 +7,16 @@ on:
 
 env:
   SUMMARY_LANGUAGE: ${{ vars.SUMMARY_LANGUAGE || 'cn' }}
+  AI_MODEL: ${{ vars.AI_MODEL }}
+  AI_MAX_TOKENS: ${{ vars.AI_MAX_TOKENS || '2000' }}
+  AI_BASE_URL: ${{ vars.AI_BASE_URL }}
 
 jobs:
   summary:
     runs-on: ubuntu-latest
+    if: ${{ vars.AI_MODEL != '' && secrets.AI_API_KEY != '' }}
     permissions:
       issues: write
-      models: read
       contents: read
 
     services:
@@ -92,14 +95,22 @@ jobs:
           FALLBACK_TITLE: ${{ github.event.issue.title }}
           TRUNCATE_CONTENT_MAX_LENGTH: ${{ vars.TRUNCATE_CONTENT_MAX_LENGTH }}
 
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install requests
+
       - name: Run AI inference for summary
         id: inference
-        uses: actions/ai-inference@v1
-        with:
-          max-tokens: 2000
-          system-prompt-file: ${{ steps.promptFile.outputs.summary-file }}
-          prompt: |
-            ${{ steps.truncateContent.outputs.content }}
+        run: |
+          echo "${{ steps.truncateContent.outputs.content }}" | python3 scripts/ai_inference.py
+        env:
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_BASE_URL: ${{ env.AI_BASE_URL }}
+          AI_MODEL: ${{ env.AI_MODEL }}
+          AI_MAX_TOKENS: ${{ env.AI_MAX_TOKENS }}
+          SYSTEM_PROMPT_FILE: ${{ steps.promptFile.outputs.summary-file }}
+          USER_PROMPT: ${{ steps.truncateContent.outputs.content }}
 
       - name: Comment with AI summary
         run: |
@@ -115,12 +126,15 @@ jobs:
           
       - name: Run AI inference for keywords
         id: inference-keywords
-        uses: actions/ai-inference@v1
-        with:
-          max-tokens: 100
-          system-prompt-file: ${{ steps.promptFile.outputs.keywords-file }}
-          prompt: |
-            ${{ steps.truncateContent.outputs.content }}
+        run: |
+          echo "${{ steps.truncateContent.outputs.content }}" | python3 scripts/ai_inference.py
+        env:
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_BASE_URL: ${{ env.AI_BASE_URL }}
+          AI_MODEL: ${{ env.AI_MODEL }}
+          AI_MAX_TOKENS: 100
+          SYSTEM_PROMPT_FILE: ${{ steps.promptFile.outputs.keywords-file }}
+          USER_PROMPT: ${{ steps.truncateContent.outputs.content }}
   
       - name: Comment with AI keywords
         run: |
@@ -133,4 +147,3 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-  
