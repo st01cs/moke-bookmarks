@@ -42,16 +42,84 @@ jobs:
             echo "URL validation failed: '$URL' is not a valid HTTP/HTTPS URL"
           fi
       
+      - name: Wait for Crawl4AI service
+        run: |
+          for i in {1..30}; do
+            if curl -s -f http://localhost:11235/health >/dev/null 2>&1; then
+              echo "Crawl4AI service is ready"
+              exit 0
+            fi
+            echo "Waiting for Crawl4AI service... (attempt $i/30)"
+            sleep 2
+          done
+          echo "Warning: Crawl4AI service may not be fully ready"
+
       - name: Submit crawl job to Crawl4AI
         id: crawlSubmit
         if: steps.urlValidation.outputs.valid == 'true'
-        uses: fjogeleit/http-request-action@v1
-        with:
-          url: 'http://localhost:11235/crawl'
-          method: 'POST'
-          contentType: 'application/json'
-          data: '{"urls": ["${{ steps.urlValidation.outputs.url }}"], "priority": 10, "crawler_params": {"markdown_generator": {"options": {"ignore_links": false, "ignore_images": false, "excluded_tags": ["script", "style", "nav", "header", "footer", "aside", "form"], "word_count_threshold": 10}}, "content_filter": {"type": "PruningContentFilter", "threshold": 0.3, "threshold_type": "fixed"}}}'
-          timeout: 10000
+        run: |
+          # Create optimized JSON payload for better content extraction
+          cat > /tmp/crawl_payload.json << 'JSON_EOF'
+          {
+            "urls": ["${{ steps.urlValidation.outputs.url }}"],
+            "priority": 10,
+            "crawler_params": {
+              "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+              "page_timeout": 60000,
+              "delay_before_return_html": 2000,
+              "wait_for": "body",
+              "markdown_generator": {
+                "type": "DefaultMarkdownGenerator",
+                "options": {
+                  "ignore_links": false,
+                  "ignore_images": false,
+                  "excluded_tags": ["script", "style", "nav", "header", "footer", "aside", "form", "iframe", "noscript", "svg", "canvas", "audio", "video", "embed", "object"],
+                  "word_count_threshold": 10,
+                  "keep_data_attributes": false,
+                  "body_only": true
+                }
+              },
+              "content_filter": {
+                "type": "PruningContentFilter",
+                "threshold": 0.48,
+                "threshold_type": "fixed",
+                "min_word_threshold": 20
+              },
+              "extraction_strategy": {
+                "type": "NoExtractionStrategy"
+              },
+              "chunking_strategy": {
+                "type": "RegexChunking",
+                "patterns": ["\n\n", "\n", "\. "],
+                "chunk_size": 1000,
+                "overlap": 200
+              },
+              "cache_mode": "bypass"
+            }
+          }
+          JSON_EOF
+          
+          # Submit the request with curl for better control
+          RESPONSE=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -d @/tmp/crawl_payload.json \
+            --connect-timeout 10 \
+            --max-time 60 \
+            http://localhost:11235/crawl)
+          
+          echo "Raw response: $RESPONSE"
+          
+          # Write response to temp file for next step
+          echo "$RESPONSE" > /tmp/crawl_submit_response.json
+          
+          # Check if response contains success indicator
+          if echo "$RESPONSE" | grep -q '"success".*true\|"task_id"\|"id"\|"results"'; then
+            echo "Crawl job submitted successfully"
+            echo "response=$RESPONSE" >> $GITHUB_OUTPUT
+          else
+            echo "Warning: Crawl job submission may have failed"
+            echo "response=$RESPONSE" >> $GITHUB_OUTPUT
+          fi
         continue-on-error: true
 
       - name: Wait for crawl completion
