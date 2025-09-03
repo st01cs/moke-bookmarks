@@ -90,7 +90,7 @@ jobs:
               },
               "chunking_strategy": {
                 "type": "RegexChunking",
-                "patterns": ["\n\n", "\n", "\. "],
+                "patterns": ["\\n\\n", "\\n", "\\. "],
                 "chunk_size": 1000,
                 "overlap": 200
               },
