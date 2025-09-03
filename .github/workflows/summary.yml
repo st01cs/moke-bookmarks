@@ -55,25 +55,43 @@ jobs:
         id: crawlSubmit
         if: steps.urlValidation.outputs.valid == 'true'
         run: |
-          # Create properly formatted JSON payload
+          # Create optimized JSON payload for better content extraction
           cat > /tmp/crawl_payload.json << 'JSON_EOF'
           {
             "urls": ["${{ steps.urlValidation.outputs.url }}"],
             "priority": 10,
             "crawler_params": {
+              "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+              "page_timeout": 60000,
+              "delay_before_return_html": 2000,
+              "wait_for": "body",
               "markdown_generator": {
+                "type": "DefaultMarkdownGenerator",
                 "options": {
                   "ignore_links": false,
                   "ignore_images": false,
-                  "excluded_tags": ["script", "style", "nav", "header", "footer", "aside", "form"],
-                  "word_count_threshold": 10
+                  "excluded_tags": ["script", "style", "nav", "header", "footer", "aside", "form", "iframe", "noscript", "svg", "canvas", "audio", "video", "embed", "object"],
+                  "word_count_threshold": 10,
+                  "keep_data_attributes": false,
+                  "body_only": true
                 }
               },
               "content_filter": {
                 "type": "PruningContentFilter",
-                "threshold": 0.3,
-                "threshold_type": "fixed"
-              }
+                "threshold": 0.48,
+                "threshold_type": "fixed",
+                "min_word_threshold": 20
+              },
+              "extraction_strategy": {
+                "type": "NoExtractionStrategy"
+              },
+              "chunking_strategy": {
+                "type": "RegexChunking",
+                "patterns": ["\n\n", "\n", "\. "],
+                "chunk_size": 1000,
+                "overlap": 200
+              },
+              "cache_mode": "bypass"
             }
           }
           JSON_EOF
@@ -83,7 +101,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d @/tmp/crawl_payload.json \
             --connect-timeout 10 \
-            --max-time 30 \
+            --max-time 60 \
             http://localhost:11235/crawl)
           
           echo "Raw response: $RESPONSE"
