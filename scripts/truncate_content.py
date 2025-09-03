@@ -102,7 +102,8 @@ def truncate_content(content, max_length=None):
     
     # Get max_length from environment variable or use default
     if max_length is None:
-        max_length = int(os.environ.get('TRUNCATE_CONTENT_MAX_LENGTH', 6000))
+        env_value = os.environ.get('TRUNCATE_CONTENT_MAX_LENGTH', '6000').strip()
+        max_length = int(env_value) if env_value else 6000
     
     print(f"Using max_length: {max_length}")
     
