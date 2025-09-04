@@ -110,6 +110,7 @@ def truncate_content(content, max_length=None):
     # Handle case where content might be a dict instead of string
     if isinstance(content, dict):
         print("Content is a dict, extracting raw_markdown")
+        print(f"Dict keys: {list(content.keys())}")
         # Try to get raw_markdown or other markdown fields from dict
         content = (
             content.get('raw_markdown') or
@@ -131,8 +132,22 @@ def truncate_content(content, max_length=None):
     print(f"Original content length: {content_length} characters")
     
     if content_length > max_length:
-        truncated = content[:max_length] + "... [Content truncated to fit token limit]"
-        print(f"Content truncated from {content_length} to {max_length} characters")
+        # Keep middle part of content
+        truncation_msg = "... [Content truncated to fit token limit] ..."
+        available_space = max_length - len(truncation_msg)
+        
+        if available_space > 0:
+            # Calculate middle section
+            start_pos = (content_length - available_space) // 2
+            end_pos = start_pos + available_space
+            
+            truncated = truncation_msg[:len("... ")] + content[start_pos:end_pos] + truncation_msg[len("... "):]
+        else:
+            # If truncation message is too long, fall back to simple middle truncation
+            start_pos = (content_length - max_length) // 2
+            truncated = content[start_pos:start_pos + max_length]
+        
+        print(f"Content truncated from {content_length} to {max_length} characters (keeping middle part)")
         return truncated
     else:
         print("Content within limit, no truncation needed")
